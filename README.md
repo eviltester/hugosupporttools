@@ -38,10 +38,22 @@ With options:
 python alias-checker.py ./content --extensions .md .markdown --verbose
 ```
 
+Include front matter `url: ...html` values as alias sources:
+
+```bash
+python alias-checker.py ./content --urls
+```
+
 Auto-fix detected alias links in place while keeping CSV output:
 
 ```bash
 python alias-checker.py ./content --modify
+```
+
+Auto-fix including `url: ...html` alias mappings:
+
+```bash
+python alias-checker.py ./content --modify --urls
 ```
 
 ### Link matching behavior
@@ -55,6 +67,8 @@ The tool scans link targets only:
 It does not flag plain-text URL mentions.
 
 When `--modify` is used, only those detected link-target contexts are rewritten.
+When `--urls` is used, front matter values like `url: /mypage.html` are treated as alias mappings of `/mypage.html -> /mypage/`.
+With `--modify --urls`, front matter `url` metadata is rewritten from `.html` to a slashless path (for example `/mypage.html` -> `/mypage`).
 
 ### Exit codes
 
@@ -65,3 +79,4 @@ When `--modify` is used, only those detected link-target contexts are rewritten.
 With `--modify`, successful runs return `0` after applying rewrites.
 
 The scan summary and verbose diagnostics are written to `stderr` so CSV output remains clean for redirects/pipelines.
+

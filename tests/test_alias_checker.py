@@ -185,6 +185,93 @@ class AliasCheckerTests(unittest.TestCase):
         self.assertIn("detected 0 mislinks", second.stderr)
         self.assertIn("Modified 0 files with 0 replacements.", second.stderr)
 
+    def test_urls_flag_detects_html_url_aliases(self):
+        root = self.make_case_dir("urls-detect")
+
+        (root / "page.md").write_text(
+            textwrap.dedent(
+                """\
+                ---
+                url: /mypage.html
+                ---
+                Page body.
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        (root / "post.md").write_text(
+            textwrap.dedent(
+                """\
+                [Link](/mypage.html)
+                Plain /mypage.html text should not count.
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        without_urls = self.run_checker(root)
+        self.assertEqual(without_urls.returncode, 0, msg=without_urls.stdout + without_urls.stderr)
+        self.assertEqual(without_urls.stdout.strip(), "Alias,Use Instead,Found In")
+        self.assertIn("detected 0 mislinks", without_urls.stderr)
+
+        with_urls = self.run_checker(root, ["--urls"])
+        self.assertEqual(with_urls.returncode, 1, msg=with_urls.stdout + with_urls.stderr)
+        self.assertIn("/mypage.html,/mypage/,post.md", with_urls.stdout)
+        self.assertIn("detected 1 mislinks", with_urls.stderr)
+
+    def test_modify_with_urls_rewrites_html_references_and_is_idempotent(self):
+        root = self.make_case_dir("urls-modify")
+
+        (root / "page.md").write_text(
+            textwrap.dedent(
+                """\
+                ---
+                url: /mypage.html
+                ---
+                Page body.
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        post_path = root / "post.md"
+        post_path.write_text(
+            textwrap.dedent(
+                """\
+                [Inline](/mypage.html)
+                [ref-link]: /mypage.html
+                <a href="/mypage.html">HTML Link</a>
+                Plain /mypage.html text should not change.
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        first = self.run_checker(root, ["--modify", "--urls"])
+        self.assertEqual(first.returncode, 0, msg=first.stdout + first.stderr)
+        self.assertIn("/mypage.html,/mypage/,post.md", first.stdout)
+        self.assertIn("detected 3 mislinks", first.stderr)
+        self.assertIn("Modified 2 files with 4 replacements.", first.stderr)
+
+        updated = post_path.read_text(encoding="utf-8")
+        self.assertIn("[Inline](/mypage/)", updated)
+        self.assertIn("[ref-link]: /mypage/", updated)
+        self.assertIn('<a href="/mypage/">HTML Link</a>', updated)
+        self.assertIn("Plain /mypage.html text should not change.", updated)
+        page_updated = (root / "page.md").read_text(encoding="utf-8")
+        self.assertIn("url: /mypage", page_updated)
+        self.assertNotIn("url: /mypage/", page_updated)
+        self.assertNotIn("url: /mypage.html", page_updated)
+
+        second = self.run_checker(root, ["--modify", "--urls"])
+        self.assertEqual(second.returncode, 0, msg=second.stdout + second.stderr)
+        self.assertEqual(second.stdout.strip(), "Alias,Use Instead,Found In")
+        self.assertIn("detected 0 mislinks", second.stderr)
+        self.assertIn("Modified 0 files with 0 replacements.", second.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

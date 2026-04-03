@@ -54,6 +54,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Rewrite detected alias link targets in place with canonical URLs.",
     )
+    parser.add_argument(
+        "--urls",
+        action="store_true",
+        help=(
+            "Treat front matter url values ending in .html as aliases and map them "
+            "to directory-style URLs (for example /page.html -> /page/)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -245,6 +253,98 @@ def extract_aliases(front_matter: dict) -> List[str]:
     if isinstance(aliases, list):
         return [str(item) for item in aliases if str(item).strip()]
     return []
+
+
+def derive_url_alias(front_matter: dict) -> Optional[Tuple[str, str]]:
+    raw_url = front_matter.get("url")
+    if not isinstance(raw_url, str) or not raw_url.strip():
+        return None
+    normalized = normalize_path_candidate(raw_url)
+    if not normalized or not normalized.lower().endswith(".html"):
+        return None
+    canonical = ensure_directory_style(normalized[:-5])
+    return normalized, canonical
+
+
+def rewrite_front_matter_url_html(raw_text: str) -> Tuple[str, int]:
+    bom_len = len(raw_text) - len(raw_text.lstrip("\ufeff"))
+    bom = raw_text[:bom_len]
+    text = raw_text[bom_len:]
+
+    if text.startswith("---\n"):
+        lines = text.splitlines(keepends=True)
+        end = None
+        for i in range(1, len(lines)):
+            if lines[i].strip() in ("---", "..."):
+                end = i
+                break
+        if end is None:
+            return raw_text, 0
+        changed = 0
+        for i in range(1, end):
+            line = lines[i]
+            match = re.match(r"^(\s*url\s*:\s*)(['\"]?)([^\"'\n#]+?)(\2)(\s*(?:#.*)?)$", line.rstrip("\r\n"))
+            if not match:
+                continue
+            current = match.group(3).strip()
+            normalized = normalize_path_candidate(current)
+            if not normalized or not normalized.lower().endswith(".html"):
+                continue
+            updated = normalized[:-5] or "/"
+            new_line = f"{match.group(1)}{match.group(2)}{updated}{match.group(4)}{match.group(5)}"
+            line_ending = line[len(line.rstrip('\r\n')) :]
+            lines[i] = f"{new_line}{line_ending}"
+            changed += 1
+            break
+        if changed:
+            return f"{bom}{''.join(lines)}", changed
+        return raw_text, 0
+
+    if text.startswith("+++\n"):
+        lines = text.splitlines(keepends=True)
+        end = None
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "+++":
+                end = i
+                break
+        if end is None:
+            return raw_text, 0
+        changed = 0
+        for i in range(1, end):
+            line = lines[i]
+            match = re.match(r"^(\s*url\s*=\s*)(['\"])([^\"'\n#]+?)(\2)(\s*(?:#.*)?)$", line.rstrip("\r\n"))
+            if not match:
+                continue
+            current = match.group(3).strip()
+            normalized = normalize_path_candidate(current)
+            if not normalized or not normalized.lower().endswith(".html"):
+                continue
+            updated = normalized[:-5] or "/"
+            new_line = f"{match.group(1)}{match.group(2)}{updated}{match.group(4)}{match.group(5)}"
+            line_ending = line[len(line.rstrip('\r\n')) :]
+            lines[i] = f"{new_line}{line_ending}"
+            changed += 1
+            break
+        if changed:
+            return f"{bom}{''.join(lines)}", changed
+        return raw_text, 0
+
+    parsed = parse_json_front_matter(text)
+    if parsed is None:
+        return raw_text, 0
+    front_matter, body = parsed
+    raw_url = front_matter.get("url")
+    if not isinstance(raw_url, str):
+        return raw_text, 0
+    normalized = normalize_path_candidate(raw_url)
+    if not normalized or not normalized.lower().endswith(".html"):
+        return raw_text, 0
+    front_matter["url"] = normalized[:-5] or "/"
+    json_front = json.dumps(front_matter, separators=(",", ":"))
+    new_text = f"{bom}{json_front}"
+    if body:
+        new_text = f"{new_text}\n{body}"
+    return new_text, 1
 
 
 def resolve_canonical_url(front_matter: dict, file_path: Path, content_dir: Path) -> str:
@@ -496,6 +596,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 duplicates.setdefault(normalized_alias, [existing]).append(canonical_url)
                 continue
             alias_to_url[normalized_alias] = canonical_url
+        if args.urls:
+            url_alias = derive_url_alias(front_matter)
+            if url_alias:
+                alias, canonical = url_alias
+                existing = alias_to_url.get(alias)
+                if existing and existing != canonical:
+                    duplicates.setdefault(alias, [existing]).append(canonical)
+                else:
+                    alias_to_url[alias] = canonical
 
     findings: List[Finding] = []
     modified_files = 0
@@ -511,14 +620,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for alias, canonical in occurrences:
             findings.append(Finding(alias=alias, canonical_url=canonical, file_path=rel_path))
 
-        if args.modify and replacements > 0:
+        if args.modify:
             raw_text = raw_texts[md]
-            prefix = raw_text[: len(raw_text) - len(body)] if body else raw_text
-            new_text = f"{prefix}{new_body}"
+            new_text = raw_text
+            metadata_updates = 0
+
+            if args.urls:
+                new_text, metadata_updates = rewrite_front_matter_url_html(new_text)
+
+            if replacements > 0:
+                prefix = new_text[: len(new_text) - len(body)] if body else new_text
+                new_text = f"{prefix}{new_body}"
+
             if new_text != raw_text:
                 md.write_text(new_text, encoding="utf-8", errors="replace")
                 modified_files += 1
-                total_replacements += replacements
+                total_replacements += replacements + metadata_updates
 
     print_csv(findings, sys.stdout)
     print(
