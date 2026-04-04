@@ -56,6 +56,18 @@ Auto-fix including `url: ...html` alias mappings:
 python alias-checker.py ./content --modify --urls
 ```
 
+Report planned alias migration into Hugo static redirect files (dry-run):
+
+```bash
+python alias-checker.py ./content --redirects
+```
+
+Apply alias migration (writes only with `--modify`):
+
+```bash
+python alias-checker.py ./content --modify --redirects
+```
+
 ### Link matching behavior
 
 The tool scans link targets only:
@@ -67,8 +79,15 @@ The tool scans link targets only:
 It does not flag plain-text URL mentions.
 
 When `--modify` is used, only those detected link-target contexts are rewritten.
-When `--urls` is used, front matter values like `url: /mypage.html` are treated as alias mappings of `/mypage.html -> /mypage/`.
+When `--urls` is used, front matter values like `url: /mypage` enforce trailing-slash link targets; values such as `/mypage` and `/mypage.html` are reported against `/mypage/`.
 With `--modify --urls`, front matter `url` metadata is rewritten from `.html` to a slashless path (for example `/mypage.html` -> `/mypage`).
+When `--redirects` is used, explicit front matter `aliases` are planned for migration to:
+
+- `static/_redirects` in Netlify format: `<alias> <canonical> 301`
+- `static/.htaccess` in Apache format: `Redirect 301 <alias> <canonical>`
+
+The static directory is resolved as `<content_dir parent>/static`.
+Redirect and front matter changes are only written when `--modify` is also provided; migration actions are always reported to `stderr`.
 
 ### Exit codes
 
