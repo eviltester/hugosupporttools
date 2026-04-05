@@ -122,6 +122,8 @@ With options:
 ```bash
 python redirect-optimiser.py /path/to/.htaccess --chain --json
 python redirect-optimiser.py /path/to/_redirects --chain --modify
+python redirect-optimiser.py /path/to/_redirects --crawl --url https://www.eviltester.com
+python redirect-optimiser.py /path/to/.htaccess --chain --crawl --modify --url https://www.eviltester.com
 ```
 
 ### Chain detection
@@ -134,11 +136,24 @@ When `--chain` is enabled, the tool reports chains where a rule target is also a
 
 Cycles (for example `/a -> /b -> /a`) are detected and reported separately.
 
+### Crawl validation
+
+When `--crawl` is enabled, the tool sends HTTP `HEAD` requests for redirect targets:
+
+- `2xx`: valid target
+- `301`/`308`: valid permanent redirect (reported, with `Location`)
+- `302`/`303`/`307`: temporary redirect (reported as a problem)
+- `4xx`/`5xx`/network errors: invalid
+
+If redirect targets are relative paths, `--url` is required so targets can be resolved (for example `/path` -> `https://www.eviltester.com/path`).
+
 ### Modify behavior
 
 When `--modify` is provided:
 
 - Non-cyclic chain members are rewritten to the terminal destination.
+- With `--crawl`, entries with invalid or temporary-redirect targets are removed.
+- With `--crawl`, targets returning `301`/`308` are rewritten to the returned `Location`.
 - Each line keeps its original status code (`301`/`302`).
 - Unrelated lines, comments, and file structure are preserved.
 - The original file is backed up first:
@@ -150,11 +165,11 @@ Cycles are not flattened.
 ### Output formats
 
 - Default: human-readable chain lines
-- `--json`: structured JSON with chain hops, terminal destination, and cycle flag
+- `--json`: structured JSON including chain data, crawl findings, and modify actions
 
 ### Exit codes
 
 - `0`: success (no chains found, or modifications applied successfully)
-- `1`: chains found when not using `--modify`
+- `1`: chains found or crawl problems found when not using `--modify`
 - `2`: invalid input or read/write error
 
