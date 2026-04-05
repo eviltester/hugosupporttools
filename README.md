@@ -99,3 +99,62 @@ With `--modify`, successful runs return `0` after applying rewrites.
 
 The scan summary and verbose diagnostics are written to `stderr` so CSV output remains clean for redirects/pipelines.
 
+## redirect-optimiser.py
+
+`redirect-optimiser.py` reads either an Apache `.htaccess` file or a Netlify `_redirects` file, detects redirect chains, and can rewrite chained redirects so they point directly to the final destination.
+
+### Supported redirect syntax
+
+- `.htaccess`: `Redirect 301 <from> <to>` and `Redirect 302 <from> <to>`
+- `_redirects`: `<from> <to> 301` and `<from> <to> 302`
+
+Other lines (comments, blank lines, unsupported directives/status codes) are ignored and preserved.
+
+### Usage
+
+```bash
+python redirect-optimiser.py /path/to/.htaccess --chain
+python redirect-optimiser.py /path/to/_redirects --chain
+```
+
+With options:
+
+```bash
+python redirect-optimiser.py /path/to/.htaccess --chain --json
+python redirect-optimiser.py /path/to/_redirects --chain --modify
+```
+
+### Chain detection
+
+When `--chain` is enabled, the tool reports chains where a rule target is also a redirect source, for example:
+
+```text
+/a -> /b -> /c
+```
+
+Cycles (for example `/a -> /b -> /a`) are detected and reported separately.
+
+### Modify behavior
+
+When `--modify` is provided:
+
+- Non-cyclic chain members are rewritten to the terminal destination.
+- Each line keeps its original status code (`301`/`302`).
+- Unrelated lines, comments, and file structure are preserved.
+- The original file is backed up first:
+  - `.htaccess.YYYYMMDDTHHMMSS.bak`
+  - `_redirects.YYYYMMDDTHHMMSS.bak`
+
+Cycles are not flattened.
+
+### Output formats
+
+- Default: human-readable chain lines
+- `--json`: structured JSON with chain hops, terminal destination, and cycle flag
+
+### Exit codes
+
+- `0`: success (no chains found, or modifications applied successfully)
+- `1`: chains found when not using `--modify`
+- `2`: invalid input or read/write error
+
