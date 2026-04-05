@@ -415,6 +415,71 @@ class RedirectOptimiserTests(unittest.TestCase):
         self.assertIn("rewritten=0", second_stdout)
         self.assertIn("removed=0", second_stdout)
 
+    def test_duplicates_reports_and_returns_one(self):
+        case = self.make_case_dir("duplicates-human")
+        redirects = case / "_redirects"
+        redirects.write_text(
+            textwrap.dedent(
+                """\
+                /a /one 301
+                /a /two 302
+                /b /three 301
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_tool(redirects, ["--duplicates"])
+        self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
+        self.assertIn("Duplicate summary: count=1", result.stdout)
+        self.assertIn("Duplicate: source=/a", result.stdout)
+        self.assertIn("/one", result.stdout)
+        self.assertIn("/two", result.stdout)
+
+    def test_duplicates_json_output(self):
+        case = self.make_case_dir("duplicates-json")
+        redirects = case / "_redirects"
+        redirects.write_text("/a /one 301\n/a /two 302\n", encoding="utf-8")
+
+        result = self.run_tool(redirects, ["--duplicates", "--json"])
+        self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertIn("duplicates", payload)
+        self.assertEqual(len(payload["duplicates"]), 1)
+        self.assertEqual(payload["duplicates"][0]["source"], "/a")
+        self.assertEqual(payload["duplicates"][0]["count"], 2)
+
+    def test_duplicates_none_returns_zero(self):
+        case = self.make_case_dir("duplicates-none")
+        redirects = case / "_redirects"
+        redirects.write_text("/a /one 301\n/b /two 302\n", encoding="utf-8")
+
+        result = self.run_tool(redirects, ["--duplicates"])
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("No duplicate redirect sources found.", result.stdout)
+
+    def test_duplicates_detects_netlify_source_without_status_code(self):
+        case = self.make_case_dir("duplicates-netlify-no-status")
+        redirects = case / "_redirects"
+        redirects.write_text(
+            textwrap.dedent(
+                """\
+                /about https://www.eviltester.com
+                /about /page/about/ 301
+                /other /target 302
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_tool(redirects, ["--duplicates"])
+        self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
+        self.assertIn("Duplicate summary: count=1", result.stdout)
+        self.assertIn("Duplicate: source=/about", result.stdout)
+        self.assertIn("https://www.eviltester.com", result.stdout)
+        self.assertIn("/page/about/", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
+

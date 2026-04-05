@@ -52,6 +52,20 @@ class CrawlFinding:
     action: str
 
 
+@dataclass
+class DuplicateSource:
+    source: str
+    rules: List["DuplicateRule"]
+
+
+@dataclass
+class DuplicateRule:
+    source: str
+    target: str
+    line_index: int
+    format: str
+
+
 class NoRedirectHandler(request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
         return None
@@ -76,6 +90,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--url",
         help="Base URL used to resolve relative redirect targets when --crawl is used.",
+    )
+    parser.add_argument(
+        "--duplicates",
+        action="store_true",
+        help="Report duplicate redirect sources (multiple rules with the same 'from').",
     )
     return parser.parse_args(argv)
 
@@ -386,6 +405,70 @@ def print_human_crawl_report(findings: List[CrawlFinding], unique_checked: int, 
         )
 
 
+def parse_duplicate_rules(lines: List[str], fmt: str) -> List[DuplicateRule]:
+    import re
+
+    parsed: List[DuplicateRule] = []
+    for idx, full_line in enumerate(lines):
+        line, _ = split_line_ending(full_line)
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if fmt == "netlify":
+            parts = stripped.split()
+            if len(parts) < 2:
+                continue
+            source, target = parts[0], parts[1]
+            parsed.append(
+                DuplicateRule(
+                    source=source,
+                    target=target,
+                    line_index=idx,
+                    format=fmt,
+                )
+            )
+            continue
+
+        match = re.match(r"^\s*Redirect(?:\s+\d{3})?\s+(\S+)\s+(\S+)\b", line, flags=re.IGNORECASE)
+        if not match:
+            continue
+        parsed.append(
+            DuplicateRule(
+                source=match.group(1).strip(),
+                target=match.group(2).strip(),
+                line_index=idx,
+                format=fmt,
+            )
+        )
+    return parsed
+
+
+def find_duplicate_sources(rules: List[DuplicateRule]) -> List[DuplicateSource]:
+    grouped: Dict[str, List[DuplicateRule]] = {}
+    for rule in rules:
+        grouped.setdefault(rule.source, []).append(rule)
+    duplicates = [
+        DuplicateSource(source=source, rules=entries)
+        for source, entries in grouped.items()
+        if len(entries) > 1
+    ]
+    duplicates.sort(key=lambda item: item.source)
+    return duplicates
+
+
+def print_human_duplicate_report(duplicates: List[DuplicateSource], out) -> None:
+    if not duplicates:
+        print("No duplicate redirect sources found.", file=out)
+        return
+    print(f"Duplicate summary: count={len(duplicates)}", file=out)
+    for dup in duplicates:
+        targets = ", ".join(
+            f"{rule.target} ({rule.format}:{rule.line_index + 1})" for rule in dup.rules
+        )
+        print(f"Duplicate: source={dup.source} targets=[{targets}]", file=out)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     redirect_path = Path(args.redirect_file).resolve()
@@ -417,6 +500,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     should_analyse = args.chain or args.modify
     chains = discover_chains(rules) if should_analyse else []
     desired_from_chains, cycles_skipped = desired_targets_from_chains(rules, chains) if args.modify else ({}, 0)
+    duplicate_rules = parse_duplicate_rules(lines, fmt) if args.duplicates else []
+    duplicates = find_duplicate_sources(duplicate_rules) if args.duplicates else []
 
     effective_target_by_line: Dict[int, str] = {}
     for rule in rules:
@@ -570,6 +655,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "cycles_skipped": cycles_skipped,
             "backup": str(backup_path) if backup_path else None,
         }
+    if args.duplicates:
+        json_payload["duplicates"] = [
+            {
+                "source": dup.source,
+                "count": len(dup.rules),
+                "rules": [
+                    {
+                        "target": rule.target,
+                        "line_index": rule.line_index,
+                        "format": rule.format,
+                    }
+                    for rule in dup.rules
+                ],
+            }
+            for dup in duplicates
+        ]
 
     if args.json:
         json.dump(json_payload, sys.stdout, indent=2)
@@ -579,6 +680,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print_human_chain_report(chains, sys.stdout)
         if args.crawl:
             print_human_crawl_report(crawl_findings, unique_checked, sys.stdout)
+        if args.duplicates:
+            print_human_duplicate_report(duplicates, sys.stdout)
         if args.modify:
             print(
                 "Modify summary: "
@@ -592,7 +695,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     has_chain_findings = bool(chains) if should_analyse else False
+    has_duplicate_findings = bool(duplicates) if args.duplicates else False
     if args.crawl and (has_chain_findings or crawl_problem_count > 0):
+        return 1
+    if has_duplicate_findings:
         return 1
     if should_analyse and has_chain_findings:
         return 1

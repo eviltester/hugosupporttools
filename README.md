@@ -124,6 +124,7 @@ python redirect-optimiser.py /path/to/.htaccess --chain --json
 python redirect-optimiser.py /path/to/_redirects --chain --modify
 python redirect-optimiser.py /path/to/_redirects --crawl --url https://www.eviltester.com
 python redirect-optimiser.py /path/to/.htaccess --chain --crawl --modify --url https://www.eviltester.com
+python redirect-optimiser.py /path/to/_redirects --duplicates
 ```
 
 ### Chain detection
@@ -147,6 +148,10 @@ When `--crawl` is enabled, the tool sends HTTP `HEAD` requests for redirect targ
 
 If redirect targets are relative paths, `--url` is required so targets can be resolved (for example `/path` -> `https://www.eviltester.com/path`).
 
+### Duplicate source detection
+
+When `--duplicates` is enabled, the tool reports any duplicate redirect `from` values (multiple redirect rules sharing the same source path).
+
 ### Modify behavior
 
 When `--modify` is provided:
@@ -165,11 +170,11 @@ Cycles are not flattened.
 ### Output formats
 
 - Default: human-readable chain lines
-- `--json`: structured JSON including chain data, crawl findings, and modify actions
+- `--json`: structured JSON including chain data, crawl findings, duplicate-source findings, and modify actions
 
 ### Exit codes
 
 - `0`: success (no chains found, or modifications applied successfully)
-- `1`: chains found or crawl problems found when not using `--modify`
+- `1`: chains found, crawl problems found, or duplicate sources found when not using `--modify`
 - `2`: invalid input or read/write error
 
