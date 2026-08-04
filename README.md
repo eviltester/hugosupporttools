@@ -178,3 +178,46 @@ Cycles are not flattened.
 - `1`: chains found, crawl problems found, or duplicate sources found when not using `--modify`
 - `2`: invalid input or read/write error
 
+## blogThumbs.py
+
+`blogThumbs.py` scans Hugo blog markdown files and generates missing post thumbnail `.jpg` files by overlaying each post title on a randomly selected source image using ImageMagick.
+
+It mirrors the old `generateImagesForAllNewBlogPosts` workflow:
+
+- scan `.md` files recursively under the blog content folder
+- read `title` from YAML front matter, with `h1` taking precedence when present
+- use the markdown filename as the output thumbnail name, replacing `.md` with `.jpg`
+- skip generation when the output thumbnail already exists
+
+### Hugo template usage
+
+The thumbnails are used by the Hugo blog post template at `layouts/blog/single.html`.
+
+That template renders an explicit front matter `image` value when one is present. When a blog post does not define `image`, it falls back to:
+
+```go-html-template
+/images/postthumbs/{{.File.BaseFileName}}.jpg
+```
+
+This is why `blogThumbs.py` writes each thumbnail to the output folder using the markdown file's base filename with a `.jpg` extension. For example, `content/blog/testing/example-post.md` is expected by the template as `/images/postthumbs/example-post.jpg`.
+
+### Usage
+
+```bash
+python blogThumbs.py --blog-dir ./hugo/content/blog --image-dir ./blog-photos/orig --output-dir ./hugo/static/images/postthumbs
+```
+
+All three folders are required and must already exist before the script runs.
+
+Optional settings match the Java defaults unless overridden:
+
+```bash
+python blogThumbs.py --blog-dir ./hugo/content/blog --image-dir ./blog-photos/orig --output-dir ./hugo/static/images/postthumbs --width 400 --height 300 --background-colour red --text-colour white
+```
+
+### Exit codes
+
+- `0`: success
+- `1`: ImageMagick failed
+- `2`: invalid input, missing folders, or no source images found
+
