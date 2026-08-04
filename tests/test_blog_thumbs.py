@@ -15,8 +15,10 @@ TMP_ROOT = REPO_ROOT / "tests" / ".tmp"
 class FixedRandom:
     def __init__(self, index=0):
         self.index = index
+        self.calls = 0
 
     def choice(self, values):
+        self.calls += 1
         return values[self.index]
 
 
@@ -126,6 +128,7 @@ class BlogThumbsTests(unittest.TestCase):
         self.assertEqual(summary.posts_found, 2)
         self.assertEqual(summary.source_images_found, 2)
         self.assertEqual(summary.generated, 2)
+        self.assertEqual(summary.skipped_with_image, 0)
         self.assertEqual(summary.skipped_existing, 0)
         self.assertEqual(len(commands), 2)
         self.assertEqual(commands[0][1], output_dir)
@@ -134,6 +137,8 @@ class BlogThumbsTests(unittest.TestCase):
         self.assertEqual(commands[0][0][-1], "2026-01-01-first.jpg")
         self.assertIn("caption:Use The H1", commands[1][0])
         self.assertEqual(commands[1][0][-1], "2026-01-02-second.jpg")
+        self.assertIn("Blog file: 2026-01-01-first.md", stdout.getvalue())
+        self.assertIn("Blog file: nested/2026-01-02-second.md", stdout.getvalue())
         self.assertIn("Generating 2026-01-01-first.jpg", stdout.getvalue())
         self.assertIn("Generating 2026-01-02-second.jpg", stdout.getvalue())
 
@@ -160,19 +165,108 @@ class BlogThumbsTests(unittest.TestCase):
         )
         commands = []
         stdout = io.StringIO()
+        rng = FixedRandom(0)
 
         summary = self.blog_thumbs.generate_blog_thumbs(
             config,
-            FixedRandom(0),
+            rng,
             command_runner=lambda command, cwd: commands.append((command, cwd)),
             out=stdout,
         )
 
         self.assertEqual(summary.generated, 0)
+        self.assertEqual(summary.skipped_with_image, 0)
         self.assertEqual(summary.skipped_existing, 1)
         self.assertEqual(commands, [])
-        self.assertIn("I choose", stdout.getvalue())
+        self.assertEqual(rng.calls, 0)
+        self.assertNotIn("I choose", stdout.getvalue())
+        self.assertNotIn("Blog file:", stdout.getvalue())
         self.assertNotIn("Generating 2026-01-01-first.jpg", stdout.getvalue())
+
+    def test_skips_posts_with_front_matter_image_without_choosing_source_image(self):
+        blog_dir, image_dir, output_dir = self.make_project_dirs("skip-front-matter-image")
+        (blog_dir / "2026-01-01-first.md").write_text(
+            textwrap.dedent(
+                """\
+                ---
+                title: Has Explicit Image
+                image: /images/blog/explicit-image.jpg
+                ---
+                Body.
+                """
+            ),
+            encoding="utf-8",
+        )
+        (image_dir / "source.jpg").write_text("fake jpg", encoding="utf-8")
+
+        config = self.blog_thumbs.BlogThumbConfig(
+            blog_dir=blog_dir,
+            image_dir=image_dir,
+            output_dir=output_dir,
+        )
+        commands = []
+        stdout = io.StringIO()
+        rng = FixedRandom(0)
+
+        summary = self.blog_thumbs.generate_blog_thumbs(
+            config,
+            rng,
+            command_runner=lambda command, cwd: commands.append((command, cwd)),
+            out=stdout,
+        )
+
+        self.assertEqual(summary.generated, 0)
+        self.assertEqual(summary.skipped_with_image, 1)
+        self.assertEqual(summary.skipped_existing, 0)
+        self.assertEqual(commands, [])
+        self.assertEqual(rng.calls, 0)
+        self.assertNotIn("I choose", stdout.getvalue())
+        self.assertNotIn("Blog file:", stdout.getvalue())
+        self.assertNotIn("Generating 2026-01-01-first.jpg", stdout.getvalue())
+
+    def test_skips_front_matter_image_with_fallback_yaml_parser(self):
+        old_yaml = self.blog_thumbs.yaml
+        try:
+            self.blog_thumbs.yaml = None
+            fields = self.blog_thumbs.parse_front_matter(
+                "---\ntitle: Fallback\nimage: /images/blog/explicit-image.jpg\n---\nBody.\n"
+            )
+        finally:
+            self.blog_thumbs.yaml = old_yaml
+
+        self.assertTrue(self.blog_thumbs.has_front_matter_image(fields))
+
+    def test_empty_image_folder_is_allowed_when_no_thumbnail_generation_needed(self):
+        blog_dir, image_dir, output_dir = self.make_project_dirs("no-images-needed")
+        (blog_dir / "2026-01-01-first.md").write_text(
+            textwrap.dedent(
+                """\
+                ---
+                title: Has Explicit Image
+                image: /images/blog/explicit-image.jpg
+                ---
+                Body.
+                """
+            ),
+            encoding="utf-8",
+        )
+        config = self.blog_thumbs.BlogThumbConfig(
+            blog_dir=blog_dir,
+            image_dir=image_dir,
+            output_dir=output_dir,
+        )
+
+        summary = self.blog_thumbs.generate_blog_thumbs(
+            config,
+            FixedRandom(0),
+            command_runner=lambda command, cwd: None,
+            out=io.StringIO(),
+        )
+
+        self.assertEqual(summary.source_images_found, 0)
+        self.assertEqual(summary.generated, 0)
+        self.assertEqual(summary.skipped_with_image, 1)
+        self.assertEqual(summary.skipped_existing, 0)
 
     def test_errors_when_image_folder_contains_no_source_images(self):
         blog_dir, image_dir, output_dir = self.make_project_dirs("no-images")

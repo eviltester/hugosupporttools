@@ -33,6 +33,7 @@ class HugoPost:
     path: Path
     title: str
     output_filename: str
+    has_image: bool
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class GenerationSummary:
     posts_found: int
     source_images_found: int
     generated: int
+    skipped_with_image: int
     skipped_existing: int
 
 
@@ -154,7 +156,7 @@ def parse_yaml_title_subset(yaml_text: str) -> Dict[str, object]:
             continue
         key, value = line.split(":", 1)
         key = key.strip()
-        if key not in ("title", "h1"):
+        if key not in ("title", "h1", "image"):
             continue
         fields[key] = strip_wrapping_quotes(value.strip())
     return fields
@@ -175,12 +177,17 @@ def title_from_front_matter(fields: Dict[str, object]) -> str:
     return title.replace("'", "")
 
 
+def has_front_matter_image(fields: Dict[str, object]) -> bool:
+    return bool(fields.get("image"))
+
+
 def post_from_markdown(path: Path) -> HugoPost:
     fields = parse_front_matter(read_text(path))
     return HugoPost(
         path=path,
         title=title_from_front_matter(fields),
         output_filename=path.name[:-3] + ".jpg",
+        has_image=has_front_matter_image(fields),
     )
 
 
@@ -262,22 +269,29 @@ def generate_blog_thumbs(
 ) -> GenerationSummary:
     posts = collect_hugo_posts(config.blog_dir)
     source_images = collect_source_images(config.image_dir)
-    if not source_images:
-        raise ValueError(f"No source .jpg or .png images found in {config.image_dir}")
 
     generated = 0
+    skipped_with_image = 0
     skipped_existing = 0
 
     for post in posts:
-        selected_image = rng.choice(source_images)
-        print("I choose", file=out)
-        print(selected_image, file=out)
+        if post.has_image:
+            skipped_with_image += 1
+            continue
 
         output_path = config.output_dir / post.output_filename
         if output_path.exists():
             skipped_existing += 1
             continue
 
+        if not source_images:
+            raise ValueError(f"No source .jpg or .png images found in {config.image_dir}")
+
+        selected_image = rng.choice(source_images)
+        blog_filename = post.path.relative_to(config.blog_dir).as_posix()
+        print(f"Blog file: {blog_filename}", file=out)
+        print("I choose", file=out)
+        print(selected_image, file=out)
         print(f"Generating {post.output_filename}", file=out)
         generate_image_from(
             selected_image,
@@ -292,6 +306,7 @@ def generate_blog_thumbs(
         posts_found=len(posts),
         source_images_found=len(source_images),
         generated=generated,
+        skipped_with_image=skipped_with_image,
         skipped_existing=skipped_existing,
     )
 
@@ -322,6 +337,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         f"Scanned {summary.posts_found} markdown files, "
         f"found {summary.source_images_found} source images, "
         f"generated {summary.generated} thumbnails, "
+        f"skipped {summary.skipped_with_image} posts with front matter image, "
         f"skipped {summary.skipped_existing} existing thumbnails.",
         file=sys.stderr,
     )

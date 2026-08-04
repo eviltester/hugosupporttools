@@ -187,13 +187,14 @@ It mirrors the old `generateImagesForAllNewBlogPosts` workflow:
 - scan `.md` files recursively under the blog content folder
 - read `title` from YAML front matter, with `h1` taking precedence when present
 - use the markdown filename as the output thumbnail name, replacing `.md` with `.jpg`
+- skip posts that define front matter `image`, because the Hugo template uses that image directly
 - skip generation when the output thumbnail already exists
 
 ### Hugo template usage
 
 The thumbnails are used by the Hugo blog post template at `layouts/blog/single.html`.
 
-That template renders an explicit front matter `image` value when one is present. When a blog post does not define `image`, it falls back to:
+That template renders an explicit front matter `image` value when one is present, so `blogThumbs.py` does not generate fallback thumbnails for those posts. When a blog post does not define `image`, the template falls back to:
 
 ```go-html-template
 /images/postthumbs/{{.File.BaseFileName}}.jpg
@@ -220,4 +221,3 @@ python blogThumbs.py --blog-dir ./hugo/content/blog --image-dir ./blog-photos/or
 - `0`: success
 - `1`: ImageMagick failed
 - `2`: invalid input, missing folders, or no source images found
-
